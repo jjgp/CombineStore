@@ -1,60 +1,65 @@
 import Combine
 
-final class Effect<S: Equatable, A> {
-    private var cancellable: AnyCancellable!
+public final class Effect<S, A> {
+    private var cancellable: Set<AnyCancellable>!
     private(set) var effect: Effect!
 
-    init(_ sink: @escaping (AnyPublisher<A, Never>, AnyPublisher<S, Never>) -> AnyCancellable) {
+    public init(_ sink: @escaping (AnyPublisher<A, Never>, AnyPublisher<S, Never>, inout Set<AnyCancellable>) -> Void) {
         effect = { [weak self] dispatch, state in
-            self?.cancellable = sink(dispatch, state)
+            guard let self = self else {
+                return nil
+            }
+            self.cancellable = []
+            sink(dispatch, state, &self.cancellable)
             return nil
         }
     }
 
-    init(_ publisher: @escaping Effect) {
+    public init(_ publisher: @escaping Effect) {
         effect = publisher
     }
 
-    init<P: Publisher>(
+    public init<P: Publisher>(
         _ publisher: @escaping (AnyPublisher<A, Never>, AnyPublisher<S, Never>) -> P
     ) where P.Output == A, P.Failure == Never {
         effect = { publisher($0, $1).eraseToAnyPublisher() }
     }
 
-    typealias Effect = (AnyPublisher<A, Never>, AnyPublisher<S, Never>) -> AnyPublisher<A, Never>?
+    public typealias Effect = (AnyPublisher<A, Never>, AnyPublisher<S, Never>) -> AnyPublisher<A, Never>?
 }
 
-final class Store<S: Equatable, A> {
+public final class Store<S, A>: ObservableObject {
     private var cancellableSet: Set<AnyCancellable> = []
-    let dispatch = PassthroughSubject<A, Never>()
-    let effects: [Effect<S, A>]
-    let state: AnyPublisher<S, Never>
+    private let dispatch: PassthroughSubject<A, Never>
+    private let effects: [Effect<S, A>]
+    @Published public private(set) var state: S
 
-    init(accumulator: @escaping Accumulator,
-         initialState: S,
-         effects: [Effect<S, A>] = []) {
-        let state = CurrentValueSubject<S, Never>(initialState)
-        self.state = state.removeDuplicates().eraseToAnyPublisher()
+    public init(accumulator: @escaping Accumulator,
+                initialState: S,
+                effects: [Effect<S, A>] = []) {
+        let dispatch = PassthroughSubject<A, Never>()
+        self.dispatch = dispatch
+        state = initialState
+        self.effects = effects
         dispatch
             .scan(initialState, accumulator)
-            .sink(receiveValue: {
-                state.send($0)
-            })
+            .assign(to: \.state, on: self)
             .store(in: &cancellableSet)
         // Note, this could potentially be dangerous as it leads to a circular publisher. In RxJS and RxSwift, a
         // circular publisher may need to be scheduled on another queue. An Effect that simply returns `dispatch` will
         // result in infinite recursion.
-        self.effects = effects
         Publishers.MergeMany(
             effects.compactMap({
-                $0.effect(dispatch.eraseToAnyPublisher(), self.state)
+                $0.effect(dispatch.eraseToAnyPublisher(), $state.eraseToAnyPublisher())
             })
         )
-            .sink(receiveValue: { [weak self] in
-                self?.dispatch.send($0)
-            })
+            .sink(receiveValue: dispatch.send)
             .store(in: &cancellableSet)
     }
 
-    typealias Accumulator = (S, A) -> S
+    public func send(_ action: A) {
+        dispatch.send(action)
+    }
+
+    public typealias Accumulator = (S, A) -> S
 }

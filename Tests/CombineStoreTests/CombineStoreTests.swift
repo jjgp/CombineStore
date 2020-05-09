@@ -5,16 +5,16 @@ import XCTest
 final class StoreTests: XCTestCase {
     func testInitialState() {
         let sut = makeSut()
-        let spy = PublisherSpy(sut.state)
+        let spy = PublisherSpy(sut.$state)
         XCTAssertEqual(spy.values, [0])
     }
 
     func testActionsUpdateState() {
         let sut = makeSut()
-        let spy = PublisherSpy(sut.state)
-        sut.dispatch.send(.decrement)
-        let anotherSpy = PublisherSpy(sut.state)
-        sut.dispatch.send(.increment)
+        let spy = PublisherSpy(sut.$state)
+        sut.send(.decrement)
+        let anotherSpy = PublisherSpy(sut.$state)
+        sut.send(.increment)
         XCTAssertEqual(spy.values, [0, -1, 0])
         XCTAssertEqual(anotherSpy.values, [-1, 0])
     }
@@ -26,8 +26,8 @@ final class StoreTests: XCTestCase {
                 .map { _ in Action.decrement }
         }
         let store = makeSut(effects: [effect])
-        let spy = PublisherSpy(store.state)
-        store.dispatch.send(.increment)
+        let spy = PublisherSpy(store.$state)
+        store.send(.increment)
         XCTAssertEqual(spy.values, [0, 1, 0])
     }
 
@@ -47,7 +47,7 @@ final class StoreTests: XCTestCase {
 
         let expect = expectation(description: "waiting for at least 5 ping pongs")
         var count = 0
-        let waitForExpectationEffect = Effect<Int, Action> { _, state in
+        let waitForExpectationEffect = Effect<Int, Action> { _, state, bag in
             state
                 .sink(receiveValue: {
                     _ = $0
@@ -56,11 +56,12 @@ final class StoreTests: XCTestCase {
                         expect.fulfill()
                     }
                 })
+            .store(in: &bag)
         }
 
         let store = makeSut(effects: [pingEffect, pongEffect, waitForExpectationEffect])
-        let spy = PublisherSpy(store.state)
-        store.dispatch.send(.increment)
+        let spy = PublisherSpy(store.$state)
+        store.send(.increment)
         wait(for: [expect], timeout: 10)
         XCTAssertEqual(spy.values, [0, 1, 0, 1, 0])
     }
