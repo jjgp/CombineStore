@@ -1,19 +1,18 @@
 import Combine
 
-public final class Store<S, A>: ObservableObject {
+public final class Store<State, Action>: ObservableObject {
     private var cancellableSet: Set<AnyCancellable> = []
-    private let dispatch: PassthroughSubject<A, Never>
-    private let effects: [Effect<S, A>]
-    @Published public private(set) var state: S
+    private let sender: PassthroughSubject<Action, Never>
+    @Published public private(set) var state: State
 
-    public init(accumulator: @escaping Accumulator,
-                initialState: S,
-                effects: [Effect<S, A>] = []) {
-        let dispatch = PassthroughSubject<A, Never>()
-        self.dispatch = dispatch
+    public init<Environment>(accumulator: @escaping Accumulator,
+                             initialState: State,
+                             effects: [Effect<State, Action, Environment>] = [],
+                             environment: Environment) {
+        let sender = PassthroughSubject<Action, Never>()
+        self.sender = sender
         state = initialState
-        self.effects = effects
-        dispatch
+        sender
             .scan(initialState, accumulator)
             .assign(to: \.state, on: self)
             .store(in: &cancellableSet)
@@ -22,16 +21,16 @@ public final class Store<S, A>: ObservableObject {
         // result in infinite recursion.
         Publishers.MergeMany(
             effects.compactMap({
-                $0.effect(dispatch.eraseToAnyPublisher(), $state.eraseToAnyPublisher())
+                $0.effect(sender.eraseToAnyPublisher(), $state.eraseToAnyPublisher(), environment)
             })
         )
-            .sink(receiveValue: dispatch.send)
+            .sink(receiveValue: sender.send)
             .store(in: &cancellableSet)
     }
 
-    public func send(_ action: A) {
-        dispatch.send(action)
+    public func send(_ action: Action) {
+        sender.send(action)
     }
 
-    public typealias Accumulator = (S, A) -> S
+    public typealias Accumulator = (State, Action) -> State
 }

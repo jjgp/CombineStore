@@ -20,8 +20,8 @@ final class StoreTests: XCTestCase {
     }
 
     func testEffect() {
-        let effect = Effect<Int, Action> { dispatch, _ in
-            dispatch
+        let effect = Effect<Int, Action, Environment> { send, _, _ in
+            send
                 .filter { $0 == .increment }
                 .map { _ in Action.decrement }
         }
@@ -32,37 +32,36 @@ final class StoreTests: XCTestCase {
     }
 
     func testPingPong() {
-        let pingEffect = Effect<Int, Action> { dispatch, _ in
-            dispatch
+        let pingEffect = Effect<Int, Action, Environment> { send, _, _ in
+            send
                 .filter { $0 == .increment }
                 .map { _ in Action.decrement }
                 .delay(for: .milliseconds(100), scheduler: RunLoop.main, options: .none)
         }
-        let pongEffect = Effect<Int, Action> { dispatch, _ in
-            dispatch
+        let pongEffect = Effect<Int, Action, Environment> { send, _, _ in
+            send
                 .filter { $0 == .decrement }
                 .map { _ in Action.increment }
                 .delay(for: .milliseconds(100), scheduler: RunLoop.main, options: .none)
         }
-
-        let expect = expectation(description: "waiting for at least 5 ping pongs")
-        var count = 0
-        let waitForExpectationEffect = Effect<Int, Action> { _, state, bag in
+        let waitForExpectationEffect = Effect<Int, Action, Environment> { _, state, environment in
             state
-                .sink(receiveValue: {
-                    _ = $0
-                    count += 1
-                    if count == 5 {
-                        expect.fulfill()
+                .sink(receiveValue: { _ in
+                    // The environment is being retained here
+                    environment.count += 1
+                    if environment.count == 5 {
+                        environment.expectation.fulfill()
                     }
                 })
-            .store(in: &bag)
+                .store(in: &environment.subscriptionBag)
         }
 
-        let store = makeSut(effects: [pingEffect, pongEffect, waitForExpectationEffect])
+        let environment = Environment()
+        environment.expectation = expectation(description: "waiting for at least 5 ping pongs")
+        let store = makeSut(effects: [pingEffect, pongEffect, waitForExpectationEffect], environment: environment)
         let spy = PublisherSpy(store.$state)
         store.send(.increment)
-        wait(for: [expect], timeout: 10)
+        wait(for: [environment.expectation], timeout: 10)
         XCTAssertEqual(spy.values, [0, 1, 0, 1, 0])
     }
 }
@@ -83,11 +82,20 @@ private func accumulator(state: Int, action: Action) -> Int {
     }
 }
 
-private func makeSut(initialState: Int = 0, effects: [Effect<Int, Action>] = []) -> Store<Int, Action> {
+private class Environment {
+    var count = 0
+    var expectation: XCTestExpectation!
+    var subscriptionBag = Set<AnyCancellable>()
+}
+
+private func makeSut(initialState: Int = 0,
+                     effects: [Effect<Int, Action, Environment>] = [],
+                     environment: Environment = Environment()) -> Store<Int, Action> {
     return Store(
         accumulator: accumulator(state:action:),
         initialState: initialState,
-        effects: effects
+        effects: effects,
+        environment: environment
     )
 }
 

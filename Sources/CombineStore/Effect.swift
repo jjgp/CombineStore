@@ -1,29 +1,21 @@
 import Combine
 
-public final class Effect<S, A> {
-    private var cancellable: Set<AnyCancellable>!
-    private(set) var effect: Effect!
+public struct Effect<State, Action, Environment> {
+    let effect: (ActionPublisher, StatePublisher, Environment) -> ActionPublisher?
 
-    public init(_ sink: @escaping (AnyPublisher<A, Never>, AnyPublisher<S, Never>, inout Set<AnyCancellable>) -> Void) {
-        effect = { [weak self] dispatch, state in
-            guard let self = self else {
-                return nil
-            }
-            self.cancellable = []
-            sink(dispatch, state, &self.cancellable)
+    public init<P: Publisher>(
+        publisher: @escaping (ActionPublisher, StatePublisher, Environment) -> P
+    ) where P.Output == Action, P.Failure == Never {
+        effect = { publisher($0, $1, $2).eraseToAnyPublisher() }
+    }
+
+    public init(sink: @escaping (ActionPublisher, StatePublisher, Environment) -> Void) {
+        effect = {
+            sink($0, $1, $2)
             return nil
         }
     }
 
-    public init(_ publisher: @escaping Effect) {
-        effect = publisher
-    }
-
-    public init<P: Publisher>(
-        _ publisher: @escaping (AnyPublisher<A, Never>, AnyPublisher<S, Never>) -> P
-    ) where P.Output == A, P.Failure == Never {
-        effect = { publisher($0, $1).eraseToAnyPublisher() }
-    }
-
-    public typealias Effect = (AnyPublisher<A, Never>, AnyPublisher<S, Never>) -> AnyPublisher<A, Never>?
+    public typealias ActionPublisher = AnyPublisher<Action, Never>
+    public typealias StatePublisher = AnyPublisher<State, Never>
 }
