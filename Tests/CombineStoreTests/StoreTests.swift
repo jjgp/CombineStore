@@ -64,6 +64,10 @@ final class StoreTests: XCTestCase {
         wait(for: [environment.expectation], timeout: 10)
         XCTAssertEqual(spy.values, [0, 1, 0, 1, 0])
     }
+
+    func testScope() {
+        
+    }
 }
 
 // MARK: - Test Helpers
@@ -73,7 +77,11 @@ private enum Action: String {
     case decrement
 }
 
-private func accumulator(state: Int, action: Action) -> Int {
+private func accumulator(state: inout Int?, action: Action) -> Int? {
+    guard let state = state else {
+        return nil
+    }
+
     switch action {
     case .increment:
         return state + 1
